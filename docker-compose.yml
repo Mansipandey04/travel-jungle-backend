@@ -1,0 +1,86 @@
+# Travel Jungle stack (backend-owned compose).
+#
+# Expected sibling layout when both repos are cloned side-by-side:
+#   travel_jungle/
+#     backend/   ← this repo (compose lives here; backend build context = .)
+#     frontend/  ← sibling frontend checkout
+#
+# Override the frontend build context if your checkout differs:
+#   FRONTEND_CONTEXT=/absolute/or/relative/path docker compose up --build
+#
+# Default FRONTEND_CONTEXT=../frontend
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-travel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travel}
+      POSTGRES_DB: ${POSTGRES_DB:-travel_jungle}
+    ports:
+      - "5432:5432"
+    volumes:
+      - travel-jungle-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-travel} -d ${POSTGRES_DB:-travel_jungle}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - travel-jungle-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-travel}:${POSTGRES_PASSWORD:-travel}@db:5432/${POSTGRES_DB:-travel_jungle}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-change-me-admin-token}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      RATE_LIMIT_SUBMISSIONS_PER_MIN: ${RATE_LIMIT_SUBMISSIONS_PER_MIN:-5}
+      UPLOAD_ROOT: /data/uploads
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      SEED_DEMO: ${SEED_DEMO:-true}
+    volumes:
+      - travel-jungle-uploads:/data/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+    networks:
+      - travel-jungle-network
+
+  frontend:
+    build:
+      context: ${FRONTEND_CONTEXT:-../frontend}
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || curl -fsS http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - travel-jungle-network
+
+networks:
+  travel-jungle-network:
+    name: travel-jungle-network
+
+volumes:
+  travel-jungle-pgdata:
+  travel-jungle-uploads:
